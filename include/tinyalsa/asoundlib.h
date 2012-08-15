@@ -254,7 +254,8 @@ int pcm_get_poll_fd(struct pcm *pcm);
  * Only accepted if opened with PCM_MMAP and PCM_NOIRQ flags
  */
 int pcm_set_avail_min(struct pcm *pcm, int avail_min);
-
+int pcm_get_time_of_status(struct pcm *pcm);
+int pcm_get_time_of_xrun(struct pcm *pcm);
 /*
  * MIXER API
  */
