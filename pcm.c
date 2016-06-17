@@ -1,7 +1,7 @@
 /* pcm.c
 **
 ** Copyright 2011, The Android Open Source Project
-** Copyright (C) 2012-2013 Freescale Semiconductor, Inc.
+** Copyright (C) 2012-2016 Freescale Semiconductor, Inc.
 **
 ** Redistribution and use in source and binary forms, with or without
 ** modification, are permitted provided that the following conditions are met:
@@ -1020,6 +1020,8 @@ int pcm_prepare(struct pcm *pcm)
 
     if (ioctl(pcm->fd, SNDRV_PCM_IOCTL_PREPARE) < 0)
         return oops(pcm, errno, "cannot prepare channel");
+
+    pcm_sync_ptr(pcm, SNDRV_PCM_SYNC_PTR_APPL);
 
     pcm->prepared = 1;
     return 0;
