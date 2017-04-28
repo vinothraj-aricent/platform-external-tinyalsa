@@ -1,7 +1,6 @@
 /* asoundlib.h
 **
 ** Copyright 2011, The Android Open Source Project
-** Copyright (C) 2012 Freescale Semiconductor, Inc.
 **
 ** Redistribution and use in source and binary forms, with or without
 ** modification, are permitted provided that the following conditions are met:
@@ -68,27 +67,6 @@ struct pcm;
 #define	PCM_STATE_PAUSED		6
 #define	PCM_STATE_SUSPENDED	7
 #define	PCM_STATE_DISCONNECTED	8
-
-#define PCM_HW_PARAM_ACCESS 0
-#define PCM_HW_PARAM_FORMAT 1
-#define PCM_HW_PARAM_SUBFORMAT 2
-#define PCM_HW_PARAM_FIRST_MASK PCM_HW_PARAM_ACCESS
-#define PCM_HW_PARAM_LAST_MASK PCM_HW_PARAM_SUBFORMAT
-#define PCM_HW_PARAM_SAMPLE_BITS 8
-#define PCM_HW_PARAM_FRAME_BITS 9
-#define PCM_HW_PARAM_CHANNELS 10
-#define PCM_HW_PARAM_RATE 11
-#define PCM_HW_PARAM_PERIOD_TIME 12
-#define PCM_HW_PARAM_PERIOD_SIZE 13
-#define PCM_HW_PARAM_PERIOD_BYTES 14
-#define PCM_HW_PARAM_PERIODS 15
-#define PCM_HW_PARAM_BUFFER_TIME 16
-#define PCM_HW_PARAM_BUFFER_SIZE 17
-#define PCM_HW_PARAM_BUFFER_BYTES 18
-#define PCM_HW_PARAM_TICK_TIME 19
-#define PCM_HW_PARAM_FIRST_INTERVAL PCM_HW_PARAM_SAMPLE_BITS
-#define PCM_HW_PARAM_LAST_INTERVAL PCM_HW_PARAM_TICK_TIME
-#define PCM_HW_PARAMS_NORESAMPLE (1<<0)
 
 /* Bit formats */
 enum pcm_format {
@@ -276,15 +254,7 @@ int pcm_get_poll_fd(struct pcm *pcm);
  * Only accepted if opened with PCM_MMAP and PCM_NOIRQ flags
  */
 int pcm_set_avail_min(struct pcm *pcm, int avail_min);
-int pcm_drain(struct pcm *pcm);
-int pcm_state(struct pcm *pcm);
-int pcm_prepare(struct pcm *pcm);
-int pcm_get_near_param(unsigned int card, unsigned int device,
-                     unsigned int flags, int type, int *data);
-int pcm_get_time_of_status(struct pcm *pcm);
-int pcm_get_time_of_xrun(struct pcm *pcm);
-int pcm_check_param_mask(unsigned int card, unsigned int device,
-                     unsigned int flags, int type, int data);
+
 /*
  * MIXER API
  */
@@ -332,25 +302,6 @@ int mixer_ctl_set_enum_by_string(struct mixer_ctl *ctl, const char *string);
 /* Determe range of integer mixer controls */
 int mixer_ctl_get_range_min(struct mixer_ctl *ctl);
 int mixer_ctl_get_range_max(struct mixer_ctl *ctl);
-
-
-/*
- * CONTROL API
- */
-struct control;
-
-/*Open and close a control */
-struct control *control_open(unsigned int card);
-void control_close(struct control *control);
-
-/* Get info about control controls */
-const char *control_card_info_get_id(struct control *control);
-const char *control_card_info_get_name(struct control *control);
-const char *control_card_info_get_driver(struct control *control);
-
-int control_pcm_next_device(struct control *control, int *device, int stream);
-const char *control_pcm_info_get_id(struct control *control, unsigned int device, int stream);
-const char *control_pcm_info_get_name(struct control *control, unsigned int device, int stream);
 
 #if defined(__cplusplus)
 }  /* extern "C" */

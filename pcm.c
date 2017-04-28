@@ -1,7 +1,6 @@
 /* pcm.c
 **
 ** Copyright 2011, The Android Open Source Project
-** Copyright (C) 2012-2016 Freescale Semiconductor, Inc.
 **
 ** Redistribution and use in source and binary forms, with or without
 ** modification, are permitted provided that the following conditions are met:
@@ -48,7 +47,6 @@
 #include <sound/asound.h>
 
 #include <tinyalsa/asoundlib.h>
-#include <android/log.h>
 
 #define PARAM_MAX SNDRV_PCM_HW_PARAM_LAST_INTERVAL
 
@@ -198,7 +196,6 @@ static unsigned int param_get_max(struct snd_pcm_hw_params *p, int n)
     return 0;
 }
 
-
 static void param_set_int(struct snd_pcm_hw_params *p, int n, unsigned int val)
 {
     if (param_is_interval(n)) {
@@ -217,11 +214,6 @@ static unsigned int param_get_int(struct snd_pcm_hw_params *p, int n)
             return i->max;
     }
     return 0;
-}
-
-static void param_set_rmask(struct snd_pcm_hw_params *p, int n)
-{
-    p->rmask |= 1 << n;
 }
 
 static void param_init(struct snd_pcm_hw_params *p)
@@ -264,7 +256,6 @@ struct pcm {
     void *mmap_buffer;
     unsigned int noirq_frames_per_msec;
     int wait_for_avail_min;
-    int time_of_xrun;
 };
 
 unsigned int pcm_get_buffer_size(struct pcm *pcm)
@@ -275,11 +266,6 @@ unsigned int pcm_get_buffer_size(struct pcm *pcm)
 const char* pcm_get_error(struct pcm *pcm)
 {
     return pcm->error;
-}
-
-int pcm_get_time_of_xrun(struct pcm *pcm)
-{
-    return pcm->time_of_xrun;
 }
 
 static int oops(struct pcm *pcm, int e, const char *fmt, ...)
@@ -312,19 +298,6 @@ static unsigned int pcm_format_to_alsa(enum pcm_format format)
     default:
     case PCM_FORMAT_S16_LE:
         return SNDRV_PCM_FORMAT_S16_LE;
-    };
-}
-
-static unsigned int alsa_format_to_pcm(unsigned int format)
-{
-    switch (format) {
-    case SNDRV_PCM_FORMAT_S32_LE:
-        return PCM_FORMAT_S32_LE;
-    case SNDRV_PCM_FORMAT_S24_LE:
-        return PCM_FORMAT_S24_LE;
-    default:
-    case SNDRV_PCM_FORMAT_S16_LE:
-        return PCM_FORMAT_S16_LE;
     };
 }
 
@@ -498,7 +471,7 @@ int pcm_get_htimestamp(struct pcm *pcm, unsigned int *avail,
 
     if (frames < 0)
         frames += pcm->boundary;
-    else if (frames >= (int)pcm->boundary)
+    else if (frames > (int)pcm->boundary)
         frames -= pcm->boundary;
 
     *avail = (unsigned int)frames;
@@ -534,7 +507,6 @@ int pcm_write(struct pcm *pcm, const void *data, unsigned int count)
                 /* we failed to make our window -- try to restart if we are
                  * allowed to do so.  Otherwise, simply allow the EPIPE error to
                  * propagate up to the app level */
-                pcm->time_of_xrun += pcm_get_time_of_status(pcm);
                 pcm->underruns++;
                 if (pcm->flags & PCM_NORESTART)
                     return -EPIPE;
@@ -569,7 +541,6 @@ int pcm_read(struct pcm *pcm, void *data, unsigned int count)
             pcm->running = 0;
             if (errno == EPIPE) {
                     /* we failed to make our window -- try to restart */
-                pcm->time_of_xrun += pcm_get_time_of_status(pcm);
                 pcm->underruns++;
                 continue;
             }
@@ -874,10 +845,8 @@ struct pcm *pcm_open(unsigned int card, unsigned int device,
     char fn[256];
     int rc;
 
-    if (!config)
-        return &bad_pcm;
     pcm = calloc(1, sizeof(struct pcm));
-    if (!pcm)
+    if (!pcm || !config)
         return &bad_pcm; /* TODO: could support default config here */
 
     pcm->config = *config;
@@ -964,7 +933,7 @@ struct pcm *pcm_open(unsigned int card, unsigned int device,
             pcm->config.start_threshold = sparams.start_threshold = 1;
         else
             pcm->config.start_threshold = sparams.start_threshold =
-                config->period_count * config->period_size;
+                config->period_count * config->period_size / 2;
     } else
         sparams.start_threshold = config->start_threshold;
 
@@ -1043,8 +1012,6 @@ int pcm_prepare(struct pcm *pcm)
     if (ioctl(pcm->fd, SNDRV_PCM_IOCTL_PREPARE) < 0)
         return oops(pcm, errno, "cannot prepare channel");
 
-    pcm_sync_ptr(pcm, SNDRV_PCM_SYNC_PTR_APPL);
-
     pcm->prepared = 1;
     return 0;
 }
@@ -1083,7 +1050,7 @@ static inline int pcm_mmap_playback_avail(struct pcm *pcm)
 
     if (avail < 0)
         avail += pcm->boundary;
-    else if (avail >= (int)pcm->boundary)
+    else if (avail > (int)pcm->boundary)
         avail -= pcm->boundary;
 
     return avail;
@@ -1112,7 +1079,7 @@ static void pcm_mmap_appl_forward(struct pcm *pcm, int frames)
     appl_ptr += frames;
 
     /* check for boundary wrap */
-    if (appl_ptr >= pcm->boundary)
+    if (appl_ptr > pcm->boundary)
          appl_ptr -= pcm->boundary;
     pcm->mmap_control->appl_ptr = appl_ptr;
 }
@@ -1177,24 +1144,6 @@ int pcm_set_avail_min(struct pcm *pcm, int avail_min)
     return 0;
 }
 
-int pcm_get_time_of_status(struct pcm *pcm)
-{
-    struct snd_pcm_status status;
-    struct timeval now, diff, tstamp;
-    int times = 0;
-    if (ioctl(pcm->fd, SNDRV_PCM_IOCTL_STATUS, &status) < 0) {
-           oops(pcm, errno, "cannot read stream status");
-    } else {
-           gettimeofday(&now, 0);
-           tstamp.tv_sec = status.trigger_tstamp.tv_sec;
-           tstamp.tv_usec = status.trigger_tstamp.tv_nsec / 1000L;
-           timersub(&now, &tstamp, &diff);
-           times = diff.tv_sec * 1000 + diff.tv_usec / 1000.0;
-   }
-   return times;
-}
-
-
 int pcm_wait(struct pcm *pcm, int timeout)
 {
     struct pollfd pfd;
@@ -1221,7 +1170,6 @@ int pcm_wait(struct pcm *pcm, int timeout)
         if (pfd.revents & (POLLERR | POLLNVAL)) {
             switch (pcm_state(pcm)) {
             case PCM_STATE_XRUN:
-                pcm->time_of_xrun += pcm_get_time_of_status(pcm);
                 return -EPIPE;
             case PCM_STATE_SUSPENDED:
                 return -ESTRPIPE;
@@ -1257,15 +1205,15 @@ int pcm_mmap_transfer(struct pcm *pcm, const void *buffer, unsigned int bytes)
         /* get the available space for writing new frames */
         avail = pcm_avail_update(pcm);
         if (avail < 0) {
-            oops(pcm, err, "cannot determine available mmap frames");
+            fprintf(stderr, "cannot determine available mmap frames");
             return err;
         }
 
         /* start the audio if we reach the threshold */
-        if (!pcm->running &&
+	    if (!pcm->running &&
             (pcm->buffer_size - avail) >= pcm->config.start_threshold) {
             if (pcm_start(pcm) < 0) {
-               oops(pcm, -errno, "start error: hw 0x%x app 0x%x avail 0x%x\n",
+               fprintf(stderr, "start error: hw 0x%x app 0x%x avail 0x%x\n",
                     (unsigned int)pcm->mmap_status->hw_ptr,
                     (unsigned int)pcm->mmap_control->appl_ptr,
                     avail);
@@ -1316,7 +1264,7 @@ int pcm_mmap_transfer(struct pcm *pcm, const void *buffer, unsigned int bytes)
         /* copy frames from buffer */
         frames = pcm_mmap_transfer_areas(pcm, (void *)buffer, offset, frames);
         if (frames < 0) {
-            oops(pcm, frames, "write error: hw 0x%x app 0x%x avail 0x%x\n",
+            fprintf(stderr, "write error: hw 0x%x app 0x%x avail 0x%x\n",
                     (unsigned int)pcm->mmap_status->hw_ptr,
                     (unsigned int)pcm->mmap_control->appl_ptr,
                     avail);
@@ -1359,121 +1307,4 @@ int pcm_ioctl(struct pcm *pcm, int request, ...)
     va_end(ap);
 
     return ioctl(pcm->fd, request, arg);
-}
-
-int pcm_drain(struct pcm *pcm)
-{
-    if (ioctl(pcm->fd, SNDRV_PCM_IOCTL_DRAIN) < 0)
-        return oops(pcm, errno, "drain failed");
-
-    return 0;
-}
-
-int pcm_get_near_param(unsigned int card, unsigned int device,
-                     unsigned int flags, int type, int *data)
-{
-    struct pcm *pcm;
-    struct snd_pcm_hw_params params;
-    char fn[256];
-    int ret = 0;
-    int min = 0, max = 0;
-    int mask = 0;
-    int request_data = *data;
-    *data = 0;
-
-    if(param_is_mask(type)) return -1;
-
-    pcm = calloc(1, sizeof(struct pcm));
-    if (!pcm)
-        return -1;
-
-    snprintf(fn, sizeof(fn), "/dev/snd/pcmC%uD%u%c", card, device,
-             flags & PCM_IN ? 'c' : 'p');
-
-    pcm->flags = flags;
-    pcm->fd = open(fn, O_RDWR);
-    if (pcm->fd < 0) {
-        oops(pcm, errno, "cannot open device '%s'", fn);
-        ret = -1;
-        goto fail;
-    }
-
-    param_init(&params);
-    param_set_min(&params, type, request_data);
-    param_set_rmask(&params, type);
-
-    if (ioctl(pcm->fd, SNDRV_PCM_IOCTL_HW_REFINE, &params)) {
-        oops(pcm, errno, "cannot set hw params rate min");
-    } else
-        min = param_get_min(&params, type);
-
-    param_init(&params);
-    param_set_max(&params, type, request_data);
-    param_set_rmask(&params, type);
-
-    if (ioctl(pcm->fd, SNDRV_PCM_IOCTL_HW_REFINE, &params)) {
-        oops(pcm, errno, "cannot set hw params rate max");
-    }
-    else
-        max = param_get_max(&params, type);
-
-    if(min > 0)       *data = min;
-    else if(max > 0)  *data = max;
-    else              *data = 0;
-
-fail_close:
-    close(pcm->fd);
-    pcm->fd = -1;
-fail:
-    free(pcm);
-    return ret;
-}
-
-int pcm_check_param_mask(unsigned int card, unsigned int device,
-                     unsigned int flags, int type, int data)
-{
-    struct pcm *pcm;
-    struct snd_pcm_hw_params params;
-    char fn[256];
-    int ret = 0;
-    int min = 0, max = 0;
-    int mask = 0;
-    int request_data = data;
-
-    if (param_is_interval(type)) return 0;
-
-    pcm = calloc(1, sizeof(struct pcm));
-    if (!pcm)
-        return 0;
-
-    snprintf(fn, sizeof(fn), "/dev/snd/pcmC%uD%u%c", card, device,
-             flags & PCM_IN ? 'c' : 'p');
-
-    pcm->flags = flags;
-    pcm->fd = open(fn, O_RDWR);
-    if (pcm->fd < 0) {
-        oops(pcm, errno, "cannot open device '%s'", fn);
-        ret = 0;
-        goto fail;
-    }
-
-    param_init(&params);
-    if (type == PCM_HW_PARAM_FORMAT)
-        param_set_mask(&params, type, pcm_format_to_alsa(request_data));
-    else
-        param_set_mask(&params, type, request_data);
-    param_set_rmask(&params, type);
-
-    if (ioctl(pcm->fd, SNDRV_PCM_IOCTL_HW_REFINE, &params) == 0) {
-        oops(pcm, errno, "cannot set hw params rate min");
-        ret = 1;
-    } else
-        ret = 0;
-
-fail_close:
-    close(pcm->fd);
-    pcm->fd = -1;
-fail:
-    free(pcm);
-    return ret;
 }
